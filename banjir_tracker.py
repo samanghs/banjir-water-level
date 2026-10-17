@@ -1,71 +1,93 @@
 import os
-import io
 import requests
+import urllib3
 import pandas as pd
-from bs4 import BeautifulSoup
 from datetime import datetime
 
-URL = "https://publicinfobanjir.water.gov.my/aras-air/data-paras-air/?state=SEL&type=NEGERI&lang=en"
+# Suppress SSL certificate warnings common on Malaysian .gov portals
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    )
-}
-
+# Target District: 5 corresponds to Kuala Langat (change to -1 for all Selangor stations)
+DISTRICT_ID = 5
+BASE_CONFIG_URL = "https://infobanjirjps.selangor.gov.my/data/config.json"
 CSV_FILE = "selangor_water_level_data.csv"
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "application/json, text/plain, */*"
+}
+
 def fetch_water_data():
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Scraping InfoBanjir...")
-    response = requests.get(URL, headers=HEADERS, timeout=25)
-    response.raise_for_status()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now_str}] Fetching data from InfoBanjir JPS API...")
 
-    soup = BeautifulSoup(response.content, "html.parser")
-    tables = pd.read_html(io.StringIO(str(soup)))
+    # 1. Fetch dynamic API base URL from config.json
+    try:
+        cfg_resp = requests.get(BASE_CONFIG_URL, headers=HEADERS, timeout=15, verify=False)
+        cfg_resp.raise_for_status()
+        api_base = cfg_resp.json().get("apiURL", "https://infobanjirjps.selangor.gov.my/InfoBanjir.WebAPI/api/")
+    except Exception as e:
+        print(f"Config fetch failed ({e}), using default fallback endpoint.")
+        api_base = "https://infobanjirjps.selangor.gov.my/InfoBanjir.WebAPI/api/"
 
-    if not tables:
-        print("No table found.")
+    if not api_base.endswith("/"):
+        api_base += "/"
+
+    # 2. Query station river levels for the specified district
+    if DISTRICT_ID == -1:
+        data_url = f"{api_base}StationRiverLevels/GetWLStationData/-1"
+    else:
+        data_url = f"{api_base}StationRiverLevels/GetWLAllStationData/{DISTRICT_ID}"
+
+    print(f"Requesting: {data_url}")
+    resp = requests.get(data_url, headers=HEADERS, timeout=25, verify=False)
+    resp.raise_for_status()
+    payload = resp.json()
+
+    stations = payload.get("stations", [])
+    if not stations:
+        print("No station records returned.")
         return None
 
-    df = tables[0]
+    # 3. Extract relevant measurement fields
+    records = []
+    for s in stations:
+        records.append({
+            "Station_ID": str(s.get("stationId", "")).strip(),
+            "Station_Name": s.get("stationName", "").strip(),
+            "District": s.get("districtName", "").strip(),
+            "Last_Updated": s.get("lastUpdate", ""),
+            "Water_Level_m": s.get("waterLevel"),
+            "Normal_Threshold_m": s.get("wlth_normal"),
+            "Alert_Threshold_m": s.get("wlth_alert"),
+            "Warning_Threshold_m": s.get("wlth_warning"),
+            "Danger_Threshold_m": s.get("wlth_danger"),
+            "Latitude": s.get("latitude"),
+            "Longitude": s.get("longitude"),
+            "Scraped_At": now_str
+        })
 
-    # Clean multi-level headers if present
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [
-            " ".join(col).strip() if "Unnamed" not in col[1] else col[0].strip()
-            for col in df.columns
-        ]
-
-    df.columns = [str(c).strip() for c in df.columns]
-    df["Scraped_At"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return df
+    return pd.DataFrame(records)
 
 def save_and_deduplicate(new_df):
     if new_df is None or new_df.empty:
-        print("Empty dataframe; nothing to save.")
         return
 
-    id_col = [c for c in new_df.columns if "Station ID" in c or "Station" in c]
-    time_col = [c for c in new_df.columns if "Updated" in c or "Last" in c]
+    # Filter out empty readings if a sensor is currently null/offline
+    new_df = new_df.dropna(subset=["Water_Level_m"])
 
-    if os.path.exists(CSV_FILE):
+    if os.path.exists(CSV_FILE) and os.path.getsize(CSV_FILE) > 0:
         existing_df = pd.read_csv(CSV_FILE)
         combined = pd.concat([existing_df, new_df], ignore_index=True)
-
-        if id_col and time_col:
-            combined = combined.drop_duplicates(subset=[id_col[0], time_col[0]], keep="last")
-        else:
-            combined = combined.drop_duplicates()
-
+        # Avoid duplicate readings using Station_ID and timestamp
+        combined = combined.drop_duplicates(subset=["Station_ID", "Last_Updated"], keep="last")
         added = len(combined) - len(existing_df)
         combined.to_csv(CSV_FILE, index=False)
-        print(f"Appended {added} new records. Total: {len(combined)}")
+        print(f"Appended {added} new reading(s). Total rows: {len(combined)}")
     else:
         new_df.to_csv(CSV_FILE, index=False)
-        print(f"Created {CSV_FILE} with {len(new_df)} records.")
+        print(f"Initialized {CSV_FILE} with {len(new_df)} records.")
 
 if __name__ == "__main__":
-    df = fetch_water_data()
-    save_and_deduplicate(df)
+    data = fetch_water_data()
+    save_and_deduplicate(data)
