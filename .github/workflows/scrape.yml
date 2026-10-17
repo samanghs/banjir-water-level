@@ -2,7 +2,6 @@ name: 30-Minute Banjir Scraper
 
 on:
   schedule:
-    # Runs every 30 minutes
     - cron: '*/30 * * * *'
   workflow_dispatch:
 
@@ -17,6 +16,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Ensure repository is up to date
+        run: git pull origin main
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,4 +39,10 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add selangor_water_level_data.csv
-          git diff --staged --quiet || (git commit -m "Automated water level update [skip ci]" && git push)
+          if ! git diff --staged --quiet; then
+            git commit -m "Automated water level update [skip ci]"
+            git pull --rebase origin main
+            git push origin main
+          else
+            echo "No new readings found; file is already up to date."
+          fi
