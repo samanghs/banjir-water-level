@@ -1,9 +1,7 @@
-name: 30-Minute Banjir Scraper
+name: 5-Minute Banjir Scraper
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
-  workflow_dispatch:
+  workflow_dispatch: # Allows cron-job.org to trigger this via API
 
 jobs:
   scrape-and-update:
@@ -44,5 +42,5 @@ jobs:
             git pull --rebase origin main
             git push origin main
           else
-            echo "No new readings found; file is already up to date."
+            echo "No new readings from sensors; CSV is already up to date."
           fi
