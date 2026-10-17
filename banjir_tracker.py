@@ -47,7 +47,7 @@ def fetch_water_data():
 
     payload = fetch_with_retry(data_url)
     if not payload:
-        print("Government portal did not respond after 3 attempts. Skipping this run.")
+        print("Government portal did not respond after 3 attempts.")
         return None
 
     stations = payload.get("stations", [])
@@ -57,12 +57,21 @@ def fetch_water_data():
 
     records = []
     for s in stations:
+        # 1. Keep only active 'Online' stations (matching the website UI)
+        if s.get("stationStatus") != 1:
+            continue
+
+        wl = s.get("waterLevel")
+        # 2. Skip nulls or offline sensor placeholders (-9999)
+        if wl is None or wl <= -900:
+            continue
+
         records.append({
             "Station_ID": str(s.get("stationId", "")).strip(),
             "Station_Name": s.get("stationName", "").strip(),
             "District": s.get("districtName", "").strip(),
             "Last_Updated": s.get("lastUpdate", ""),
-            "Water_Level_m": s.get("waterLevel"),
+            "Water_Level_m": wl,
             "Normal_Threshold_m": s.get("wlth_normal"),
             "Alert_Threshold_m": s.get("wlth_alert"),
             "Warning_Threshold_m": s.get("wlth_warning"),
@@ -76,17 +85,17 @@ def fetch_water_data():
 
 def save_and_deduplicate(new_df):
     if new_df is None or new_df.empty:
+        print("No valid active station records to write.")
         return
-
-    new_df = new_df.dropna(subset=["Water_Level_m"])
 
     existing_df = pd.DataFrame()
     if os.path.exists(CSV_FILE):
         try:
             existing_df = pd.read_csv(CSV_FILE)
+            # Clean out any previously saved -9999 entries from older runs
+            if "Water_Level_m" in existing_df.columns:
+                existing_df = existing_df[existing_df["Water_Level_m"] > -900]
         except pd.errors.EmptyDataError:
-            # Handles 0-byte or blank files cleanly without crashing
-            print(f"{CSV_FILE} was empty. Overwriting with fresh data.")
             existing_df = pd.DataFrame()
 
     if not existing_df.empty:
