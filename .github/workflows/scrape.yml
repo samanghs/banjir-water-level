@@ -1,4 +1,4 @@
-name: 5-Minute Banjir Scraper
+name: 15-Minute Banjir Scraper
 
 on:
   workflow_dispatch: # Allows cron-job.org to trigger this via API
