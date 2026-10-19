@@ -1,7 +1,7 @@
-name: 15-Minute Banjir Scraper
+name: Banjir Water Level Tracker
 
 on:
-  workflow_dispatch: # Allows cron-job.org to trigger this via API
+  workflow_dispatch:
 
 jobs:
   scrape-and-update:
@@ -42,5 +42,5 @@ jobs:
             git pull --rebase origin main
             git push origin main
           else
-            echo "No new readings from sensors; CSV is already up to date."
+            echo "No new readings; CSV is already up to date."
           fi
