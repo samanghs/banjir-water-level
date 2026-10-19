@@ -9,12 +9,16 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 DISTRICT_ID = 5
 BASE_CONFIG_URL = "https://infobanjirjps.selangor.gov.my/data/config.json"
-CSV_FILE = "selangor_water_level_data.csv"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "application/json, text/plain, */*"
 }
+
+def get_monthly_csv_filename():
+    """Generates filename based on current year and month (e.g., selangor_water_level_data_2026_10.csv)"""
+    year_month = datetime.now().strftime("%Y_%m")
+    return f"selangor_water_level_data_{year_month}.csv"
 
 def fetch_with_retry(url, retries=3, backoff=5):
     for attempt in range(1, retries + 1):
@@ -57,12 +61,10 @@ def fetch_water_data():
 
     records = []
     for s in stations:
-        # 1. Keep only active 'Online' stations (matching the website UI)
         if s.get("stationStatus") != 1:
             continue
 
         wl = s.get("waterLevel")
-        # 2. Skip nulls or offline sensor placeholders (-9999)
         if wl is None or wl <= -900:
             continue
 
@@ -88,11 +90,13 @@ def save_and_deduplicate(new_df):
         print("No valid active station records to write.")
         return
 
+    # Determine target file for the current month
+    csv_file = get_monthly_csv_filename()
+
     existing_df = pd.DataFrame()
-    if os.path.exists(CSV_FILE):
+    if os.path.exists(csv_file):
         try:
-            existing_df = pd.read_csv(CSV_FILE)
-            # Clean out any previously saved -9999 entries from older runs
+            existing_df = pd.read_csv(csv_file)
             if "Water_Level_m" in existing_df.columns:
                 existing_df = existing_df[existing_df["Water_Level_m"] > -900]
         except pd.errors.EmptyDataError:
@@ -102,11 +106,11 @@ def save_and_deduplicate(new_df):
         combined = pd.concat([existing_df, new_df], ignore_index=True)
         combined = combined.drop_duplicates(subset=["Station_ID", "Last_Updated"], keep="last")
         added = len(combined) - len(existing_df)
-        combined.to_csv(CSV_FILE, index=False)
-        print(f"Appended {added} new reading(s). Total records: {len(combined)}")
+        combined.to_csv(csv_file, index=False)
+        print(f"Appended {added} new reading(s) to {csv_file}. Total records: {len(combined)}")
     else:
-        new_df.to_csv(CSV_FILE, index=False)
-        print(f"Created {CSV_FILE} with {len(new_df)} initial records.")
+        new_df.to_csv(csv_file, index=False)
+        print(f"Created {csv_file} with {len(new_df)} initial records.")
 
 if __name__ == "__main__":
     data = fetch_water_data()
